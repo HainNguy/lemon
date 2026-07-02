@@ -6,6 +6,7 @@ import { SettingsView } from './settings/SettingsView';
 import { BreakOverlay } from './break/BreakOverlay';
 import { useSettings } from '../hooks/useSettings';
 import { requestPermission } from '../services/notificationService';
+import { BACKGROUND_PRESETS } from '../constants/gradients';
 
 type Tab = 'timer' | 'stats' | 'settings';
 
@@ -25,8 +26,12 @@ export function ContentView() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    document.body.style.background = BACKGROUND_PRESETS[settings.backgroundIndex];
+  }, [settings.backgroundIndex]);
+
   return (
-    <div className="min-h-screen bg-black flex flex-col">
+    <div className="min-h-screen bg-transparent flex flex-col">
       {/* Break overlay sits at z-9999 and covers everything */}
       <BreakOverlay gradientIndex={settings.overlayGradientIndex} showQuotes={settings.showQuotes} />
 
@@ -44,7 +49,7 @@ export function ContentView() {
         </div>
 
         {/* Bottom tab bar */}
-        <div className="sticky bottom-0 pb-6 pt-2 bg-black">
+        <div className="sticky bottom-0 pb-6 pt-2 bg-transparent">
           <div className="flex gap-1 bg-white/5 rounded-2xl p-1">
             {TABS.map(({ id, icon: Icon, label }) => (
               <button

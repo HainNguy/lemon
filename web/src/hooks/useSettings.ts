@@ -9,6 +9,7 @@ export interface Settings {
   enableNotifications: boolean;
   showQuotes: boolean;
   overlayGradientIndex: number;
+  backgroundIndex: number;
 }
 
 const DEFAULTS: Settings = {
@@ -20,6 +21,7 @@ const DEFAULTS: Settings = {
   enableNotifications: true,
   showQuotes: true,
   overlayGradientIndex: 0,
+  backgroundIndex: 0,
 };
 
 function loadSetting<K extends keyof Settings>(key: K): Settings[K] {
@@ -44,6 +46,7 @@ export function useSettings(): { settings: Settings; update: UpdateSettings } {
     enableNotifications: loadSetting('enableNotifications'),
     showQuotes: loadSetting('showQuotes'),
     overlayGradientIndex: loadSetting('overlayGradientIndex'),
+    backgroundIndex: loadSetting('backgroundIndex'),
   }));
 
   const update: UpdateSettings = (key, value) => {

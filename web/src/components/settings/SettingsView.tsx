@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Settings, UpdateSettings } from '../../hooks/useSettings';
-import { GRADIENT_PRESETS, GRADIENT_NAMES } from '../../constants/gradients';
+import { GRADIENT_PRESETS, GRADIENT_NAMES, BACKGROUND_PRESETS, BACKGROUND_NAMES } from '../../constants/gradients';
 
 interface Props {
   settings: Settings;
@@ -104,7 +104,27 @@ export function SettingsView({ settings, update }: Props) {
         </div>
       </div>
 
-      {/* Gradient picker */}
+      {/* Background picker */}
+      <div className="flex flex-col gap-3">
+        <p className="text-white/30 text-xs tracking-widest uppercase">App Background</p>
+        <div className="grid grid-cols-3 gap-2">
+          {BACKGROUND_PRESETS.map((bg, i) => (
+            <button
+              key={i}
+              onClick={() => update('backgroundIndex', i)}
+              className={`h-14 rounded-xl transition-all ${
+                settings.backgroundIndex === i
+                  ? 'ring-2 ring-white ring-offset-2 ring-offset-black scale-[1.04]'
+                  : 'opacity-70 hover:opacity-100'
+              }`}
+              style={{ background: bg }}
+              title={BACKGROUND_NAMES[i]}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Break overlay picker */}
       <div className="flex flex-col gap-3">
         <p className="text-white/30 text-xs tracking-widest uppercase">Break Overlay</p>
         <div className="grid grid-cols-3 gap-2">
