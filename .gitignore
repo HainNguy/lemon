@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Editor settings
+.vscode/
+.idea/
+
+# macOS metadata
+.DS_Store
+
+# Local environment variables (secrets — never commit these)
+.env
+.env.local
+.env.*.local
