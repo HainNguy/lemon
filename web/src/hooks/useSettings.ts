@@ -21,7 +21,7 @@ const DEFAULTS: Settings = {
   enableNotifications: true,
   showQuotes: true,
   overlayGradientIndex: 0,
-  backgroundIndex: 0,
+  backgroundIndex: 6,
 };
 
 function loadSetting<K extends keyof Settings>(key: K): Settings[K] {
