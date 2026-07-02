@@ -1215,3 +1215,221 @@ where it appears on screen.
 ---
 
 *Next: Lecture 6 — State & Re-rendering (`useState` in depth)*
+
+---
+
+## Lecture 6: State & Re-rendering
+
+### Part 1 — What is State?
+
+So far the components we've looked at just display things. But a real app changes over time
+— the timer counts down, the active tab switches, a toggle turns on and off. Data that
+changes over time is called **state**.
+
+Think of a scoreboard at a football match. The score is state — it starts at 0–0 and changes
+every time a goal is scored. Every time it changes, the scoreboard redraws to show the new
+number. The scoreboard doesn't remember every previous score — it only knows the current one
+and displays that.
+
+React works exactly the same way. When state changes, React redraws the parts of the screen
+that depend on it. You don't tell it *how* to redraw — it figures that out. You just update
+the value and React handles the rest.
+
+### Part 2 — `useState` Unpacked
+
+Here is `useState` in action from `ContentView.tsx` line 20:
+
+```tsx
+const [tab, setTab] = useState<Tab>('timer');
+```
+
+Let's break every part of this down:
+
+**`useState('timer')`** — calls the `useState` function with the starting value `'timer'`.
+This is the initial state — what the value is when the component first appears on screen.
+
+**`useState` returns an array of two things:**
+- The current value
+- A function to change it
+
+**`const [tab, setTab] = ...`** — this is **array destructuring**. It's a shorthand for:
+
+```tsx
+const result = useState<Tab>('timer');
+const tab = result[0];      // the current value
+const setTab = result[1];   // the function to change it
+```
+
+The square brackets on the left are not creating an array — they're unpacking one.
+
+**`<Tab>`** — this is the TypeScript annotation. It tells TypeScript that `tab` can only
+ever be one of the three values defined in the `Tab` type (`'timer'`, `'stats'`,
+`'settings'`). Without it, TypeScript would infer the type as `string`, which is too broad.
+
+**The naming convention:** by tradition, if the value is called `x`, the setter is called
+`setX`. You'll see this everywhere: `[tab, setTab]`, `[draft, setDraft]`, `[count, setCount]`.
+
+### Part 3 — What Re-rendering Actually Means
+
+"Re-render" is a word that sounds technical but describes something simple: React calls your
+component function again.
+
+Here's the step-by-step of what happens when a user clicks the Stats tab button:
+
+1. The button's `onClick` fires: `() => setTab('stats')`
+2. `setTab('stats')` tells React: "the value of `tab` has changed to `'stats'`"
+3. React schedules a re-render of `ContentView`
+4. React calls `ContentView()` again — the whole function runs from top to bottom
+5. This time, `useState` returns `'stats'` as the current value (not `'timer'`)
+6. The function returns new JSX — with `<StatisticsView />` instead of `<TimerView />`
+7. React compares the new JSX to the previous JSX
+8. It finds the difference: `<TimerView />` is gone, `<StatisticsView />` is new
+9. React updates just those DOM nodes — everything else stays untouched
+10. The screen shows the Statistics view
+
+The key insight: **React calls your function, not you.** You never write "now redraw the
+screen." You just call `setTab` and React handles steps 3–10 automatically.
+
+### Part 4 — State is a Snapshot
+
+Here's something that trips up almost every beginner. Each time React calls your component
+function, the value of `tab` is frozen for that entire call. It doesn't update mid-function.
+
+```tsx
+const [tab, setTab] = useState<Tab>('timer');
+
+// tab is 'timer' here
+
+setTab('stats');
+
+// tab is STILL 'timer' here — it doesn't change immediately
+// the new value only appears in the NEXT time React calls this function
+console.log(tab); // prints 'timer', not 'stats'
+```
+
+Think of it like a photograph. Each render is a photo of what the state looked like at that
+moment. When you call `setTab`, you're not editing the current photo — you're telling React
+to take a new photo with the updated value.
+
+This is why state is called a "snapshot" — each render captures the state at that point in
+time, and the function works with that frozen snapshot from start to finish.
+
+### Part 5 — Multiple State Variables
+
+A component can have as many state variables as it needs. Each `useState` call is
+independent. Look at `DurationInput` in `SettingsView.tsx`:
+
+```tsx
+function DurationInput({ label, valueMinutes, onCommit, min, max }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const displayed = draft ?? String(valueMinutes);
+  ...
+}
+```
+
+This component has one state variable: `draft`. It stores what the user is currently typing
+in the number input — before they've confirmed it by pressing Enter or clicking away.
+
+Why is this needed? Because the real setting (stored in localStorage) should only update when
+the user *finishes* typing, not on every single keystroke. If you typed `"2"` on your way
+to `"25"`, you don't want the timer to temporarily become 2 minutes.
+
+The `draft ?? String(valueMinutes)` line means: show the draft if one exists, otherwise show
+the real saved value. The `??` operator means "if the left side is null, use the right side
+instead."
+
+When the user clicks away (the `onBlur` event), `handleBlur` runs:
+
+```tsx
+function handleBlur() {
+  const parsed = parseInt(displayed, 10);
+  if (!isNaN(parsed)) {
+    onCommit(Math.min(max, Math.max(min, parsed)));
+  }
+  setDraft(null);  // clear the draft — go back to showing the real value
+}
+```
+
+It parses the draft into a number, clamps it between `min` and `max`, commits it to the real
+setting, then clears the draft. Clean and self-contained.
+
+This pattern — a local `draft` state that shadows the real value while editing — is called
+the **draft pattern** and appears in almost every form-based UI.
+
+### Part 6 — State is Private to Each Instance
+
+Each time a component appears in the tree, it gets its own independent state. This is easy
+to miss because we only have one `DurationInput` visible at a time, but there are actually
+two rendered in the settings — one for Focus Duration and one for Break Duration:
+
+```tsx
+<DurationInput label="Focus Duration" valueMinutes={settings.workDuration / 60} ... />
+<DurationInput label="Break Duration" valueMinutes={settings.breakDuration / 60} ... />
+```
+
+Each one has its own `draft` state. Typing in the Focus input doesn't affect the Break
+input's draft at all — they are completely separate, even though they're both `DurationInput`
+components. The state belongs to the *instance*, not the component definition.
+
+Think of a component definition as a cookie cutter, and each rendered instance as a separate
+cookie. They have the same shape but are independent objects — changing one doesn't change
+the others.
+
+### Part 7 — How the Tab Highlight Works
+
+Look at line 58–59 in `ContentView.tsx`:
+
+```tsx
+className={`flex-1 flex flex-col items-center gap-1 py-2.5 rounded-xl text-xs transition-colors ${
+  tab === id ? 'bg-white/15 text-white' : 'text-white/25 hover:text-white/60'
+}`}
+```
+
+The backtick string (`` ` `` characters) is a **template literal** — JavaScript's way of
+building a string that contains variable values. The `${ }` inside it is where you drop in
+a JavaScript expression.
+
+`tab === id ? 'bg-white/15 text-white' : 'text-white/25 hover:text-white/60'` is a
+**ternary expression** — a compact if/else on one line:
+
+```
+condition ? valueIfTrue : valueIfFalse
+```
+
+So the button for the currently active tab gets a light background and full white text.
+The other two buttons get dim text. Every time `tab` changes, React re-renders `ContentView`,
+this expression re-evaluates, and the CSS classes update automatically. No "find the active
+button and add a class" code anywhere.
+
+### Exercise 6.1 — Trace the Draft Pattern
+
+Open `SettingsView.tsx` and read `DurationInput` carefully. Trace what happens step by step
+when a user:
+
+1. Clicks into the Focus Duration input (currently showing `25`)
+2. Clears it and types `3`
+3. Keeps typing to make it `30`
+4. Presses Enter
+
+For each step, what is the value of `draft`? What is `displayed`? What does the input show?
+
+### Exercise 6.2 — What Would Break
+
+Without running the code, predict what would happen if you changed line 30 in
+`SettingsView.tsx` from:
+
+```tsx
+const [draft, setDraft] = useState<string | null>(null);
+```
+
+to:
+
+```tsx
+const [draft, setDraft] = useState<string | null>(String(valueMinutes));
+```
+
+What would be different about how the input behaves? Is this better or worse?
+
+---
+
+*Next: Lecture 7 — Side Effects (`useEffect` in depth)*
