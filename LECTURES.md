@@ -1530,3 +1530,1103 @@ next line? Why or why not?
 ---
 
 *Next: Lecture 7 — Side Effects (`useEffect` in depth)*
+
+---
+
+## Lecture 7 — Side Effects & `useEffect` in Depth
+
+### The Big Picture
+
+So far, every component you've studied has been a **pure function**: it takes some inputs (props, state) and returns some JSX. No surprises. Same inputs → same output. React loves this because it can re-run your component whenever it wants and nothing breaks.
+
+But real apps need to reach *outside* that pure bubble:
+
+- Set `document.title` so the browser tab shows the timer
+- Start a `setInterval` to count down seconds
+- Read from `localStorage` when the app first loads
+- Subscribe to an event and clean up when the component is removed
+
+These are called **side effects** — work that touches the world outside your component. React gives you one dedicated tool for them: `useEffect`.
+
+---
+
+### The Analogy: A Hotel Room
+
+Imagine your component is a hotel room. Every time a guest checks in (renders), the room is set up fresh. But some things can't just be "rendered" — like switching on the air conditioning. You need to:
+
+1. **Turn it on** when the guest arrives
+2. **Turn it off** when they leave
+
+`useEffect` is the hotel's system for exactly this. It runs *after* the room is set up, and you can tell it what to do when the guest checks out (the **cleanup function**).
+
+---
+
+### The Syntax
+
+```tsx
+useEffect(() => {
+  // side effect goes here — runs after render
+
+  return () => {
+    // cleanup — runs before the next effect or when component unmounts
+  };
+}, [dependency1, dependency2]);
+```
+
+Three parts:
+1. **The effect function** — what to do
+2. **The cleanup function** (optional return) — how to undo it
+3. **The dependency array** — when to re-run
+
+---
+
+### The Dependency Array — The Most Important Part
+
+The dependency array controls *when* the effect runs:
+
+| Dependency array | When the effect runs |
+|---|---|
+| `[a, b]` | After first render, and again whenever `a` or `b` changes |
+| `[]` (empty) | Only once — after the very first render |
+| omitted entirely | After *every* render (almost never what you want) |
+
+Think of it as telling React: **"re-run this effect whenever any of these values change."**
+
+---
+
+### Live Example 1 — Background in `ContentView.tsx`
+
+Open `web/src/components/ContentView.tsx`. Find this block:
+
+```tsx
+useEffect(() => {
+  document.body.style.background = BACKGROUND_PRESETS[backgroundIndex];
+}, [backgroundIndex]);
+```
+
+Trace it step by step:
+
+1. Component renders for the first time with `backgroundIndex = 6`
+2. React finishes painting the screen
+3. Effect runs → `document.body.style.background` is set to the Lemon Yellow gradient
+4. User picks "Ocean" in Settings → `backgroundIndex` becomes `2`
+5. Component re-renders
+6. React sees `backgroundIndex` changed → runs the effect again → background updates
+
+The screen never directly sets the background. The chain is: **state changes → render → effect runs → DOM updates**.
+
+---
+
+### Live Example 2 — The Timer Interval in `timerStore.ts`
+
+Open `web/src/store/timerStore.ts` and find `startInterval`:
+
+```tsx
+function startInterval(remainingSeconds: number, totalSeconds: number): void {
+  clearTimer();
+  expectedEndTime = Date.now() + remainingSeconds * 1000;
+  intervalId = setInterval(() => {
+    const remaining = Math.max(0, (expectedEndTime! - Date.now()) / 1000);
+    useTimerStore.setState({ timeRemaining: remaining, progress: 1 - remaining / totalSeconds });
+    if (remaining <= 0) {
+      clearTimer();
+      handleSessionEnd();
+    }
+  }, 250);
+}
+```
+
+This lives outside React on purpose (Zustand manages it), but the principle is identical to `useEffect`. When you start the timer you must also be able to stop it (`clearTimer()`). That's the cleanup problem.
+
+Here's what it would look like inside a component:
+
+```tsx
+useEffect(() => {
+  const id = setInterval(() => tick(), 250);
+  return () => clearInterval(id);   // cleanup: stop the interval
+}, []);                              // run once on mount
+```
+
+Without the `return () => clearInterval(id)`, every time the component re-mounted you'd stack another interval on top — multiple ticks per second, piling up forever.
+
+---
+
+### The Three Patterns You'll See Everywhere
+
+**Pattern 1: Run once on mount**
+```tsx
+useEffect(() => {
+  // fetch initial data, subscribe to something
+}, []);
+```
+
+**Pattern 2: React to a value changing**
+```tsx
+useEffect(() => {
+  document.title = `${timeRemaining} — Focus`;
+}, [timeRemaining]);
+```
+
+**Pattern 3: Subscribe + unsubscribe**
+```tsx
+useEffect(() => {
+  window.addEventListener('keydown', handleKey);
+  return () => window.removeEventListener('keydown', handleKey);
+}, [handleKey]);
+```
+
+---
+
+### The Most Common Mistake: The Stale Closure
+
+This one catches every developer at least once.
+
+```tsx
+const [count, setCount] = useState(0);
+
+useEffect(() => {
+  const id = setInterval(() => {
+    console.log(count); // always prints 0!
+    setCount(count + 1); // always sets to 1!
+  }, 1000);
+  return () => clearInterval(id);
+}, []); // ← empty array: effect runs once, captures count = 0
+```
+
+The effect runs once and captures `count = 0` in its closure. `count` never updates inside the interval because the effect never re-runs. This is called a **stale closure** — you're holding a frozen snapshot of `count` from the moment the effect first ran.
+
+The fix: use the **functional update form**:
+```tsx
+setCount(prev => prev + 1); // always reads the latest value
+```
+
+This is exactly why the Lemon timer uses `expectedEndTime` (a module-level variable outside React) instead of reading state inside the interval — it sidesteps the stale closure problem entirely.
+
+---
+
+### Exercise 7.1 — Predict the Effect
+
+Look at this component. For each scenario below, say whether the effect re-runs and why:
+
+```tsx
+function Timer({ isRunning }: { isRunning: boolean }) {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setSeconds(s => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [isRunning]);
+
+  return <p>{seconds}s</p>;
+}
+```
+
+1. Component first mounts with `isRunning = false`
+2. Parent passes `isRunning = true`
+3. `seconds` increments from `0` to `1` (internal state change, `isRunning` unchanged)
+4. Parent passes `isRunning = false`
+
+For each: does the effect re-run? If so, does the cleanup run first?
+
+---
+
+### Key Takeaways
+
+- `useEffect` is how you reach outside React — DOM, timers, subscriptions, network
+- The dependency array controls *when* the effect re-runs — get it wrong and you get bugs
+- Always return a cleanup function when your effect creates something that persists (intervals, event listeners, subscriptions)
+- State is frozen inside a single effect run — use functional updates (`prev => prev + 1`) to always read the latest value
+
+---
+
+### Comprehension Check
+
+Why does `useEffect(() => { ... }, [])` run exactly once, but `useEffect(() => { ... })` (no array at all) runs after every single render?
+
+---
+
+*Next: Lecture 8 — Async & Data Fetching (fetch, promises, loading states)*
+
+---
+
+## Lecture 8 — Async & Data Fetching
+
+### The Big Picture
+
+Everything you've learned so far has been **synchronous** — the code runs line by line, top to bottom, without waiting. `useState`, `useEffect`, JSX — all instant.
+
+But the real world doesn't cooperate. When you ask a server for data, you don't get it immediately. You ask, then you wait, then eventually the answer arrives. This waiting is called **asynchronous** work, and it requires a different way of thinking.
+
+This lecture teaches you how JavaScript handles waiting, and how React renders while waiting.
+
+---
+
+### The Analogy: Ordering at a Restaurant
+
+Synchronous code is like a vending machine — you put money in, the snack falls out immediately. No waiting.
+
+Asynchronous code is like ordering at a restaurant:
+1. You place your order (start the request)
+2. You don't sit frozen staring at the kitchen — you talk, look at your phone (other code runs)
+3. The waiter brings the food when it's ready (callback fires)
+
+JavaScript is single-threaded — it can only do one thing at a time. But it can *start* a slow task, keep doing other things, and come back when the result is ready. That's the async model.
+
+---
+
+### Promises — The Placeholder
+
+A **Promise** is JavaScript's way of saying *"I don't have the answer yet, but I promise I'll give it to you when I do."*
+
+```ts
+const promise = fetch('https://api.example.com/data');
+// promise is not the data — it's a ticket for the data
+```
+
+A Promise has three possible states:
+
+```
+pending  →  fulfilled (got the data)
+         →  rejected  (something went wrong)
+```
+
+You handle the result with `.then()` and `.catch()`:
+
+```ts
+fetch('https://api.example.com/data')
+  .then(response => response.json())
+  .then(data => console.log(data))
+  .catch(error => console.error(error));
+```
+
+This works, but nesting `.then()` chains gets messy fast.
+
+---
+
+### async/await — Promises with Better Syntax
+
+`async/await` is just cleaner syntax for the same thing. Instead of chains, you write it like normal sequential code:
+
+```ts
+async function loadData() {
+  try {
+    const response = await fetch('https://api.example.com/data');
+    const data = await response.json();
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+```
+
+`await` pauses *this function* until the Promise resolves — but it doesn't freeze the rest of the app. The restaurant keeps serving other tables.
+
+Two rules:
+- You can only use `await` inside a function marked `async`
+- An `async` function always returns a Promise, even if you don't think about it
+
+---
+
+### The Problem: `useEffect` Can't Be `async`
+
+Here's where beginners always hit a wall. You might try this:
+
+```tsx
+// ❌ This looks right but is broken
+useEffect(async () => {
+  const data = await fetchSomething();
+  setData(data);
+}, []);
+```
+
+React requires the `useEffect` callback to either return nothing or return a cleanup function. An `async` function always returns a Promise — and React doesn't know what to do with that. It silently ignores it, which causes memory leaks.
+
+**The fix:** define the async function *inside* the effect, then call it:
+
+```tsx
+// ✅ Correct pattern
+useEffect(() => {
+  async function load() {
+    const data = await fetchSomething();
+    setData(data);
+  }
+  void load();
+}, []);
+```
+
+`void` is just a way of saying "I know this returns a Promise and I'm intentionally ignoring it." You'll see this pattern throughout the codebase.
+
+---
+
+### The Three-State Loading Pattern
+
+Whenever you fetch data, your UI has three possible states, and you need to handle all three:
+
+```
+loading  →  success (show data)
+         →  error   (show error message)
+```
+
+In React, you model this with state:
+
+```tsx
+function UserStats() {
+  const [data, setData] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const result = await fetchStats();
+        setData(result);
+      } catch (e) {
+        setError('Failed to load stats');
+      } finally {
+        setLoading(false);  // runs whether it succeeded or failed
+      }
+    }
+    void load();
+  }, []);
+
+  if (loading) return <p>Loading...</p>;
+  if (error)   return <p>{error}</p>;
+  return <p>Today: {data!.todayWorkTime}s</p>;
+}
+```
+
+`finally` is the part of a try/catch block that always runs at the end — perfect for clearing the loading spinner.
+
+---
+
+### Live Example — `statsStore.ts` in the Codebase
+
+Open `web/src/store/statsStore.ts`. The current version uses Dexie's `useLiveQuery`, which handles the async work for you behind the scenes. But notice the structure:
+
+```ts
+const sessions = useLiveQuery(
+  () => db.sessions.where('startTime').aboveOrEqual(monthStart)
+                   .and(s => s.type === 'work')
+                   .toArray(),
+  [monthStart],
+);
+
+if (!sessions) {
+  return { todayWorkTime: 0, ... };  // ← this is the "loading" state
+}
+```
+
+That `if (!sessions)` check is the loading guard — `useLiveQuery` returns `undefined` while the query is running, then the real array once it resolves. It's the same three-state idea, just hidden behind a library.
+
+---
+
+### The Race Condition Trap
+
+Here's a subtle bug that shows up when the user triggers multiple fetches quickly — for example, clicking between tabs fast:
+
+```tsx
+useEffect(() => {
+  async function load() {
+    const data = await fetchStats(userId);
+    setData(data); // ← which fetch wins?
+  }
+  void load();
+}, [userId]);
+```
+
+If `userId` changes twice quickly, two fetches are in flight. They might arrive out of order — the first response could overwrite the second. The screen shows stale data.
+
+The fix is a **cancellation flag**:
+
+```tsx
+useEffect(() => {
+  let cancelled = false;
+
+  async function load() {
+    const data = await fetchStats(userId);
+    if (!cancelled) setData(data); // only update if still relevant
+  }
+  void load();
+
+  return () => { cancelled = true; }; // cleanup: discard stale responses
+}, [userId]);
+```
+
+When `userId` changes, React runs the cleanup (`cancelled = true`) before starting the new effect. Any in-flight response from the old fetch is silently discarded.
+
+---
+
+### Exercise 8.1 — Spot the Bugs
+
+Here are three broken fetch patterns. For each one, identify what's wrong:
+
+**A:**
+```tsx
+useEffect(async () => {
+  const data = await fetchStats();
+  setData(data);
+}, []);
+```
+
+**B:**
+```tsx
+useEffect(() => {
+  async function load() {
+    const data = await fetchStats();
+    setData(data);
+  }
+  void load();
+}); // no dependency array
+```
+
+**C:**
+```tsx
+useEffect(() => {
+  async function load() {
+    const data = await fetchStats(userId);
+    setData(data);
+  }
+  void load();
+}, [userId]);
+// (userId changes rapidly — user clicks through profiles quickly)
+```
+
+---
+
+### Key Takeaways
+
+- A **Promise** is a placeholder for a value that doesn't exist yet — it's either pending, fulfilled, or rejected
+- `async/await` is cleaner syntax for working with Promises — it lets you write async code that reads like sync code
+- Never mark a `useEffect` callback as `async` — define an inner `async` function and call it instead
+- Every fetch needs three UI states: loading, success, error
+- Race conditions happen when multiple fetches are in flight — use a cancellation flag in the cleanup function
+
+---
+
+### Comprehension Check
+
+You fetch user data in a `useEffect` with `[userId]` as the dependency. The user clicks rapidly through five different profiles. How many fetch requests go out, and how many `setData` calls should actually update the screen?
+
+---
+
+*Next: Lecture 9 — The Module System & How Files Talk to Each Other*
+
+---
+
+## Lecture 9 — The Module System & How Files Talk to Each Other
+
+### The Big Picture
+
+Every `.ts` and `.tsx` file in the Lemon codebase is a **module** — an isolated unit of code with its own scope. Variables defined in one file are completely invisible to every other file by default.
+
+This is a feature, not a bug. Without modules, every variable in every file would share one global namespace. Name a variable `data` in two different files and they'd silently overwrite each other. Modules prevent that entirely.
+
+The module system is the mechanism that lets files *deliberately* share what they choose to share, and hide everything else.
+
+---
+
+### The Analogy: A Workshop with Labeled Shelves
+
+Imagine each file is a workshop with its own shelves. Whatever you build inside stays inside — no one else can see it.
+
+If you want to share a tool with another workshop, you put it on the **export shelf**. If another workshop wants that tool, they walk over and **import** it by name.
+
+Only what's on the export shelf is accessible. Everything else stays private.
+
+---
+
+### Two Kinds of Export
+
+**Named export** — export multiple things by name:
+
+```ts
+// gradients.ts
+export const BACKGROUND_PRESETS = [...];
+export const BACKGROUND_NAMES = [...];
+export function applyBackground(index: number) { ... }
+```
+
+**Default export** — export one main thing per file (no name at the export site):
+
+```ts
+// App.tsx
+export default function App() {
+  return <ContentView />;
+}
+```
+
+Most files in Lemon use named exports. Default exports are reserved for the one primary thing a file is "about" — typically a React component that shares the file's name.
+
+---
+
+### Two Kinds of Import
+
+**Named import** — pick specific exports by their exact name, in curly braces:
+
+```ts
+import { BACKGROUND_PRESETS, BACKGROUND_NAMES } from '../../constants/gradients';
+```
+
+**Default import** — import the default export, and give it whatever local name you want:
+
+```ts
+import App from './App';
+import MyApp from './App'; // same thing, different local name
+```
+
+You can mix both in one line:
+
+```ts
+import React, { useState, useEffect } from 'react';
+//     ↑ default          ↑ named
+```
+
+---
+
+### Paths — Relative vs Package
+
+Look at the top of any file in Lemon and you'll see two styles of import path:
+
+```ts
+import { useState } from 'react';               // package — no dot
+import { BACKGROUND_PRESETS } from '../../constants/gradients';  // relative — starts with .
+```
+
+**Package imports** (no leading dot) come from `node_modules`. Vite finds them automatically.
+
+**Relative imports** (`./` or `../`) are your own files. The path is relative to the file doing the importing:
+
+```
+src/components/settings/SettingsView.tsx
+                         ↑ you are here
+
+../../constants/gradients
+  ↑ up to components
+     ↑ up to src
+        ↑ then into constants/gradients.ts
+```
+
+The extension (`.ts`, `.tsx`) is usually omitted — the bundler adds it automatically.
+
+---
+
+### The Module Graph
+
+Every import creates a dependency. Vite traces all of them starting from `index.html` → `main.tsx` → `App.tsx` → and so on, building a **module graph** — a map of every file and how they connect.
+
+Here's a simplified slice of Lemon's graph:
+
+```
+main.tsx
+  └── App.tsx
+        └── components/ContentView.tsx
+              ├── constants/gradients.ts
+              ├── store/timerStore.ts
+              │     ├── db/database.ts
+              │     ├── models/TimerPhase.ts
+              │     └── services/notificationService.ts
+              └── components/settings/SettingsView.tsx
+                    └── constants/gradients.ts  ← same file, loaded once
+```
+
+If two files both import `gradients.ts`, the module is only loaded and executed **once**. Vite caches it and hands the same result to both importers.
+
+---
+
+### Live Example — Tracing an Import in the Codebase
+
+Open `web/src/components/settings/SettingsView.tsx`. Line 3:
+
+```ts
+import { GRADIENT_PRESETS, GRADIENT_NAMES, BACKGROUND_PRESETS, BACKGROUND_NAMES } from '../../constants/gradients';
+```
+
+Now open `web/src/constants/gradients.ts`. You'll see all four names are explicitly exported:
+
+```ts
+export const BACKGROUND_PRESETS = [...] as const;
+export const BACKGROUND_NAMES   = [...] as const;
+export const GRADIENT_PRESETS   = [...] as const;
+export const GRADIENT_NAMES     = [...] as const;
+```
+
+The `as const` at the end is a TypeScript annotation that says: "don't widen the type — treat these exact string values as the type, not just `string[]`." It's what allows TypeScript to know that index `0` is `'Spice'` specifically, not just any string.
+
+---
+
+### What `import type` Means
+
+You'll occasionally see this in the codebase:
+
+```ts
+import type { Settings, UpdateSettings } from '../../hooks/useSettings';
+```
+
+The `type` keyword tells TypeScript: "only import this for type-checking — erase it completely from the compiled JavaScript." Types don't exist at runtime, so there's nothing to import. This keeps the compiled output clean and avoids circular dependency problems.
+
+---
+
+### The Barrel Pattern (and Why Lemon Doesn't Use It)
+
+Some projects create an `index.ts` file in each folder that re-exports everything:
+
+```ts
+// components/index.ts
+export { ContentView } from './ContentView';
+export { SettingsView } from './settings/SettingsView';
+export { StatisticsView } from './statistics/StatisticsView';
+```
+
+This lets importers write:
+
+```ts
+import { ContentView, SettingsView } from '../components';
+```
+
+instead of drilling into each subfolder. Lemon keeps imports explicit (no barrels) — it's easier to trace exactly where something comes from when you're learning the codebase.
+
+---
+
+### Exercise 9.1 — Read the Module Graph
+
+Open `web/src/store/timerStore.ts` and look at the import section at the top. Answer:
+
+1. Which imports come from packages (npm) vs your own files?
+2. What does `timerStore.ts` export? Is it a named or default export?
+3. Pick one component that imports from `timerStore.ts` and trace the path: from that component file, how many `../` steps does it take to reach `timerStore.ts`?
+
+---
+
+### Key Takeaways
+
+- Every file is a module with private scope — nothing leaks out unless explicitly exported
+- **Named exports** let a file share multiple things; **default exports** share one primary thing
+- **Named imports** use `{}` and must match the export name exactly; **default imports** can use any local name
+- Relative paths (starting with `./` or `../`) point to your own files; bare names point to packages
+- The module graph is built from the entry point outward — each file is loaded and executed only once
+
+---
+
+### Comprehension Check
+
+You define `const helper = () => {}` in a file but never write `export`. Another file tries to `import { helper } from './utils'`. What happens, and why?
+
+---
+
+*Next: Lecture 10 — Tailwind CSS: Styling Without Writing CSS Files*
+
+---
+
+## Lecture 10 — Tailwind CSS: Styling Without Writing CSS Files
+
+### The Big Picture
+
+Every app you've ever used has two layers: the **structure** (HTML/JSX — what's on the page) and the **style** (CSS — how it looks). You've been reading the structure layer for nine lectures. Now meet the style layer.
+
+Tailwind CSS is the styling system Lemon uses. Instead of writing separate `.css` files full of rules, you style things directly inside your JSX using short class names called **utility classes**. It sounds strange at first, but by the end of this lecture it'll feel natural.
+
+---
+
+### The Problem Traditional CSS Has
+
+Here's how styling used to work (and still works without Tailwind):
+
+```css
+/* SettingsView.css */
+.section-header {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 0.75rem;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+}
+```
+
+```tsx
+// SettingsView.tsx
+<p className="section-header">Durations</p>
+```
+
+You write the style in one file, reference it by name in another. This works — but it has a problem: **indirection**. To understand what an element looks like, you must jump between two files. Over time, the CSS file fills up with classes that may or may not still be used. Nobody wants to delete them because they're afraid something will break.
+
+---
+
+### Tailwind's Answer: Put the Style Next to the Element
+
+Tailwind gives you a library of small, single-purpose classes. Each class does exactly one thing:
+
+| Class | What it does |
+|---|---|
+| `text-white` | `color: white` |
+| `text-xs` | `font-size: 0.75rem` |
+| `tracking-widest` | `letter-spacing: 0.1em` |
+| `uppercase` | `text-transform: uppercase` |
+| `flex` | `display: flex` |
+| `gap-4` | `gap: 1rem` |
+| `rounded-xl` | `border-radius: 0.75rem` |
+| `px-4` | `padding-left: 1rem; padding-right: 1rem` |
+| `py-3` | `padding-top: 0.75rem; padding-bottom: 0.75rem` |
+
+You stack them directly on the element:
+
+```tsx
+<p className="text-white/30 text-xs tracking-widest uppercase">Durations</p>
+```
+
+Now you can read the element and see exactly how it's styled — no file jumping required.
+
+---
+
+### The Naming System
+
+Tailwind class names follow a consistent pattern once you learn the vocabulary:
+
+```
+{property}-{value}
+```
+
+Examples:
+- `text-sm` → small text
+- `text-white` → white text
+- `bg-white` → white background
+- `p-4` → padding all sides, size 4
+- `px-4` → padding x-axis (left + right), size 4
+- `py-2` → padding y-axis (top + bottom), size 2
+- `mt-6` → margin-top, size 6
+- `w-full` → width: 100%
+- `h-14` → height: 3.5rem (fixed)
+- `min-h-screen` → min-height: 100vh
+
+The sizing scale is based on multiples of 4px: size `1` = 4px, `2` = 8px, `4` = 16px, `8` = 32px.
+
+---
+
+### Opacity Modifier — The `/` Syntax
+
+Lemon uses dark, semi-transparent colors everywhere. Tailwind's `/` modifier sets opacity directly on a color:
+
+```tsx
+<p className="text-white/30">      {/* white at 30% opacity */}
+<div className="bg-white/5">       {/* white background at 5% opacity */}
+<button className="bg-white/15 hover:bg-white/25"> {/* 15% → 25% on hover */}
+```
+
+This is why the UI has that layered glass look — translucent whites over dark backgrounds.
+
+---
+
+### State Variants — `hover:`, `focus:`, `disabled:`
+
+You can prefix any class with a variant to apply it only in a certain state:
+
+```tsx
+<button className="bg-white/15 hover:bg-white/25 transition-colors">
+```
+
+- `hover:bg-white/25` → apply `bg-white/25` only when the mouse is over the element
+- `focus:ring-1` → show a ring only when the element is focused (keyboard navigation)
+- `disabled:opacity-40` → dim the button when it's disabled
+- `transition-colors` → animate color changes smoothly (not a variant — always on)
+
+Open `web/src/components/settings/SettingsView.tsx` and look at the `Toggle` component:
+
+```tsx
+<button
+  className={`relative w-11 h-6 rounded-full transition-colors ${on ? 'bg-blue-500' : 'bg-white/15'}`}
+>
+```
+
+This is **conditional classes** — a template literal that switches between two class sets based on a boolean. This pattern is everywhere in the codebase.
+
+---
+
+### How Tailwind Actually Works
+
+Here's what's clever about Tailwind: it doesn't ship a huge CSS file with every possible class. Instead:
+
+1. At build time, Vite scans every `.tsx` and `.ts` file for class names
+2. It generates a CSS file containing **only** the classes you actually used
+3. That CSS file is tiny — often under 10KB
+
+This is why you never import a CSS file in your components. Vite handles it automatically via the Tailwind plugin in `vite.config.ts`.
+
+One important rule: **don't construct class names dynamically**:
+
+```tsx
+// ❌ Tailwind can't scan this — it never sees the full class name
+const size = 'lg';
+<div className={`text-${size}`}>
+
+// ✅ Always write full class names
+<div className={large ? 'text-lg' : 'text-sm'}>
+```
+
+The scanner looks for complete strings. Fragments it can't find won't be included in the final CSS.
+
+---
+
+### Live Example — The Background Picker in `SettingsView.tsx`
+
+Open `web/src/components/settings/SettingsView.tsx` and find the background picker section:
+
+```tsx
+<button
+  key={i}
+  onClick={() => update('backgroundIndex', i)}
+  className={`h-14 rounded-xl transition-all ${
+    settings.backgroundIndex === i
+      ? 'ring-2 ring-white ring-offset-2 ring-offset-black scale-[1.04]'
+      : 'opacity-70 hover:opacity-100'
+  }`}
+  style={{ background: bg }}
+  title={BACKGROUND_NAMES[i]}
+/>
+```
+
+Decode each class:
+- `h-14` — fixed height
+- `rounded-xl` — rounded corners
+- `transition-all` — animate all changes smoothly
+- `ring-2 ring-white ring-offset-2 ring-offset-black` — a white outline ring with a black gap (selected state)
+- `scale-[1.04]` — scale up 4% (selected state) — the `[...]` is an **arbitrary value**, letting you use exact numbers Tailwind doesn't have built-in
+- `opacity-70 hover:opacity-100` — slightly faded, full brightness on hover (unselected state)
+
+Notice `style={{ background: bg }}` alongside the class names. Tailwind handles layout and spacing; the dynamic gradient string goes into `style` because it's a runtime value Tailwind can't pre-generate.
+
+---
+
+### Exercise 10.1 — Decode a Real Component
+
+Open `web/src/components/ContentView.tsx` and find the wordmark line (the "Lemon" text at the top). Read its `className` and write out in plain English what each class does. Then answer: why is the text barely visible instead of bright white?
+
+---
+
+### Key Takeaways
+
+- Tailwind replaces separate CSS files with utility classes written directly on elements
+- Each class does exactly one thing — you compose styles by stacking classes
+- The `/` modifier controls opacity: `text-white/30` is white at 30% opacity
+- Variants like `hover:`, `focus:`, `disabled:` apply classes only in specific states
+- Tailwind scans your source files at build time and generates only the CSS you actually used — always write complete class names, never build them from string fragments
+
+---
+
+### Comprehension Check
+
+Why can't you write `className={\`text-${size}\`}` and expect it to work, even if `size` is always `'sm'` or `'lg'` at runtime?
+
+---
+
+*Next: Lecture 11 — Zustand: Global State Without the Boilerplate*
+
+---
+
+## Lecture 11 — Zustand: Global State Without the Boilerplate
+
+### The Big Picture
+
+You know `useState` — it gives a component its own private memory. But what happens when two components that are far apart in the tree both need the same piece of data?
+
+That's the problem Zustand solves. It's a **global state store** — a box of data that any component in the entire app can read from or write to, without threading props through every layer in between.
+
+Lemon uses Zustand for the timer (`timerStore.ts`) and previously for stats. Understanding it will unlock the most important file in the codebase.
+
+---
+
+### The Problem: Prop Drilling
+
+Imagine the timer's `timeRemaining` value. It's needed by:
+- `TimerView` — displays the countdown
+- `ProgressRing` — fills the circle
+- `ContentView` — sets `document.title`
+
+With only `useState`, you'd have to put `timeRemaining` in the highest common ancestor, then pass it down as a prop through every component in between — even ones that don't use it. This is called **prop drilling**, and it becomes painful fast:
+
+```
+ContentView (holds state)
+  └── TimerView (passes it down)
+        └── TimerControls (passes it down)
+              └── ProgressRing (finally uses it)
+```
+
+Every middle layer is forced to know about data it doesn't care about. Add a new consumer and you have to touch every component in the chain.
+
+---
+
+### The Analogy: A Shared Whiteboard
+
+`useState` is a sticky note on one component's desk — private, local.
+
+Zustand is a whiteboard on the wall that everyone in the office can see. Any component can walk up, read what's written, erase it, and write something new. No one needs to pass the information from desk to desk.
+
+---
+
+### Creating a Store
+
+Here's the minimal anatomy of a Zustand store:
+
+```ts
+import { create } from 'zustand';
+
+interface CounterState {
+  count: number;
+  increment: () => void;
+  reset: () => void;
+}
+
+export const useCounterStore = create<CounterState>((set) => ({
+  count: 0,
+  increment: () => set(state => ({ count: state.count + 1 })),
+  reset: () => set({ count: 0 }),
+}));
+```
+
+Three things to notice:
+
+1. **`create<T>()`** — takes a function that receives `set` and returns the initial state + actions
+2. **`set()`** — the only way to update state; merges the new values in
+3. **The result is a hook** — `useCounterStore` is called inside components just like `useState`
+
+---
+
+### Using the Store
+
+Any component anywhere in the tree can read from it:
+
+```tsx
+function CounterDisplay() {
+  const count = useCounterStore(state => state.count);
+  return <p>{count}</p>;
+}
+
+function ResetButton() {
+  const reset = useCounterStore(state => state.reset);
+  return <button onClick={reset}>Reset</button>;
+}
+```
+
+The argument you pass to `useCounterStore` is a **selector** — a function that picks exactly what you need from the store. This matters for performance: `CounterDisplay` only re-renders when `count` changes. `ResetButton` never re-renders because `reset` is a function reference that never changes.
+
+If you want everything at once, you can write:
+
+```tsx
+const { count, increment } = useCounterStore();
+// ⚠️ re-renders whenever anything in the store changes
+```
+
+That's fine for small stores, but in a large store you want selectors.
+
+---
+
+### Live Example — `timerStore.ts`
+
+Open `web/src/store/timerStore.ts`. The store is defined near the bottom:
+
+```ts
+export const useTimerStore = create<TimerState>((set, get) => ({
+  phase: { kind: 'idle' },
+  timeRemaining: getWorkDuration(),
+  totalTime: getWorkDuration(),
+  completedWorkSessions: 0,
+  progress: 0,
+
+  start: () => {
+    const workDuration = getWorkDuration();
+    sessionStartTime = Date.now();
+    set({ phase: { kind: 'working' }, timeRemaining: workDuration, ... });
+    startInterval(workDuration, workDuration);
+  },
+
+  pause: () => {
+    const { phase } = get();
+    if (phase.kind !== 'working' && phase.kind !== 'onBreak') return;
+    clearTimer();
+    set({ phase: { kind: 'paused', resumingTo: ... } });
+  },
+  // ...
+}));
+```
+
+Notice `get` alongside `set`. While `set` writes new state, `get` reads the *current* state from inside an action — necessary because action functions are defined once and would have stale values if they relied on closure variables.
+
+---
+
+### State Lives Outside React
+
+Zustand's store lives **outside the React component tree** entirely. You can read and write it from plain TypeScript functions — no hooks, no components required.
+
+Look at `handleSessionEnd()` in `timerStore.ts`:
+
+```ts
+function handleSessionEnd(): void {
+  const state = useTimerStore.getState(); // ← called outside a component
+  // ...
+  useTimerStore.setState({ phase: { kind: 'onBreak' }, ... });
+}
+```
+
+`useTimerStore.getState()` and `useTimerStore.setState()` are static methods on the store — usable anywhere. This is how the `setInterval` callback (which runs outside React entirely) can still update the UI: it writes to the store, Zustand notifies all subscribed components, they re-render.
+
+This is fundamentally different from `useState`, which only works inside components.
+
+---
+
+### `set` — Partial Updates
+
+`set` does a **shallow merge**, not a full replacement. You only need to specify what changed:
+
+```ts
+// Only updates timeRemaining and progress — everything else stays the same
+set({ timeRemaining: remaining, progress: 1 - remaining / totalSeconds });
+```
+
+If you need to compute the new value from the old one, use the function form:
+
+```ts
+set(state => ({ completedWorkSessions: state.completedWorkSessions + 1 }));
+```
+
+---
+
+### The Full Data Flow in Lemon
+
+```
+setInterval fires (every 250ms)
+  └── useTimerStore.setState({ timeRemaining, progress })
+        └── Zustand notifies subscribers
+              └── Components with selectors on timeRemaining re-render
+                    └── New JSX → React updates the DOM
+```
+
+The timer never directly touches the DOM. It writes to the store. The store notifies components. Components return JSX. React handles the DOM. Each layer only knows about the next one.
+
+---
+
+### Exercise 11.1 — Trace a Button Press
+
+Open `web/src/components/` and find where the Start/Pause button is rendered. Trace exactly what happens — step by step — when the user clicks Start for the first time:
+
+1. Which component renders the button?
+2. Which store action does the `onClick` call?
+3. What does that action call inside `timerStore.ts`?
+4. What state changes, and which components re-render as a result?
+
+---
+
+### Key Takeaways
+
+- Zustand is a global store — any component can read or write it without prop drilling
+- You create a store with `create<T>()`, which returns a hook
+- Pass a **selector** to the hook to subscribe only to the slice you need — this prevents unnecessary re-renders
+- `set` does a shallow merge; use the function form `set(state => ...)` when you need the current value
+- The store lives outside React — `getState()` and `setState()` work anywhere, including inside `setInterval` callbacks
+
+---
+
+### Comprehension Check
+
+A component calls `useTimerStore(state => state.completedWorkSessions)`. The user clicks Start and the timer begins counting down — `timeRemaining` and `progress` are updating every 250ms. Does this component re-render on every tick? Why or why not?
+
+---
+
+*Next: Lecture 12 — IndexedDB & Dexie: Storing Data in the Browser*
