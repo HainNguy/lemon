@@ -6,7 +6,7 @@ cd ~/repos/lemon/web
 npm run dev
 
 ```
-That's it. Vite will print:
+ Vite will print:
 
 VITE ready in ~1s
 
@@ -21,3 +21,7 @@ To test it offline
 ```
 npm run build && npm run preview
 ```
+
+Visit and install the app on home screen via
+
+https://lemon-mersdawn.vercel.app/
